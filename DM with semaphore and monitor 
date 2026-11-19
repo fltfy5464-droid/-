@@ -1,0 +1,212 @@
+
+# Deadline Monotonic (DM) with Monitor and Semaphore
+# Deterministic, discrete-time scheduling simulation
+
+tasks = [
+    {
+        "name": "P1", "arrival": 0, "deadline": 8,
+        "before": 1, "monitor": 2, "semaphore": 1, "after": 2
+    },
+    {
+        "name": "P2", "arrival": 1, "deadline": 5,
+        "before": 1, "monitor": 1, "semaphore": 2, "after": 1
+    },
+    {
+        "name": "P3", "arrival": 2, "deadline": 6,
+        "before": 1, "monitor": 1, "semaphore": 1, "after": 2
+    },
+]
+
+# Monitor protects Resource A.
+monitor_owner = None
+
+# Binary semaphore protects Resource B.
+semaphore_value = 1
+semaphore_owner = None
+
+# Initialize task states and metrics.
+for p in tasks:
+    p["burst"] = (
+        p["before"] + p["monitor"]
+        + p["semaphore"] + p["after"]
+    )
+
+    p["remaining"] = {
+        "BEFORE": p["before"],
+        "MONITOR": p["monitor"],
+        "SEMAPHORE": p["semaphore"],
+        "AFTER": p["after"],
+    }
+
+    p["phase"] = "BEFORE"
+    p["first_start"] = None
+    p["completion"] = None
+    p["wait"] = 0
+    p["blocked_monitor"] = 0
+    p["blocked_semaphore"] = 0
+    p["done"] = False
+
+time = 0
+idle_time = 0
+gantt = []
+
+
+def advance_phase(p):
+    """Move to the next phase when the current one finishes."""
+    order = ["BEFORE", "MONITOR", "SEMAPHORE", "AFTER"]
+    while (
+        p["phase"] != "DONE"
+        and p["remaining"][p["phase"]] == 0
+    ):
+        old_phase = p["phase"]
+        idx = order.index(old_phase)
+
+        if old_phase == "MONITOR":
+            global monitor_owner
+            if monitor_owner == p["name"]:
+                monitor_owner = None
+                print(f"t={time}: {p['name']} released Monitor")
+
+        if old_phase == "SEMAPHORE":
+            global semaphore_owner, semaphore_value
+            if semaphore_owner == p["name"]:
+                semaphore_owner = None
+                semaphore_value = 1
+                print(f"t={time}: {p['name']} released Semaphore")
+
+        if idx == len(order) - 1:
+            p["phase"] = "DONE"
+            p["done"] = True
+            p["completion"] = time
+        else:
+            p["phase"] = order[idx + 1]
+
+
+def add_gantt(start, end, label):
+    if gantt and gantt[-1][2] == label and gantt[-1][1] == start:
+        gantt[-1] = (gantt[-1][0], end, label)
+    else:
+        gantt.append((start, end, label))
+
+
+while any(not p["done"] for p in tasks):
+    for p in tasks:
+        advance_phase(p)
+
+    arrived = [
+        p for p in tasks
+        if p["arrival"] <= time and not p["done"]
+    ]
+
+    runnable = []
+    blocked = []
+
+    for p in arrived:
+        phase = p["phase"]
+
+        if phase == "MONITOR" and monitor_owner not in (None, p["name"]):
+            p["blocked_monitor"] += 1
+            blocked.append(p)
+
+        elif phase == "SEMAPHORE" and semaphore_value == 0:
+            p["blocked_semaphore"] += 1
+            blocked.append(p)
+
+        else:
+            runnable.append(p)
+
+    # A task holding either resource finishes its protected phase
+    # before another task is selected.
+    owner_name = monitor_owner or semaphore_owner
+
+    if owner_name is not None:
+        current = next(
+            p for p in tasks
+            if p["name"] == owner_name and not p["done"]
+        )
+    else:
+        # Deadline Monotonic: shortest relative deadline first.
+        runnable.sort(key=lambda p: p["deadline"])
+        current = runnable[0] if runnable else None
+
+    if current is None:
+        idle_time += 1
+        add_gantt(time, time + 1, "IDLE")
+        time += 1
+        continue
+
+    # Ready tasks not selected wait in the ready queue.
+    for p in runnable:
+        if p is not current:
+            p["wait"] += 1
+
+    if current["first_start"] is None:
+        current["first_start"] = time
+
+    phase = current["phase"]
+
+    # Enter the monitor when Resource A is available.
+    if phase == "MONITOR" and monitor_owner is None:
+        monitor_owner = current["name"]
+        print(f"t={time}: {current['name']} entered Monitor")
+
+    # Acquire the binary semaphore for Resource B.
+    if phase == "SEMAPHORE" and semaphore_value == 1:
+        semaphore_value = 0
+        semaphore_owner = current["name"]
+        print(f"t={time}: {current['name']} acquired Semaphore")
+
+    add_gantt(time, time + 1, current["name"])
+
+    current["remaining"][phase] -= 1
+    time += 1
+
+    advance_phase(current)
+
+
+# Print per-task results.
+print("\nDM with Monitor and Semaphore")
+print("=" * 112)
+
+print(
+    f"{'Task':<7}{'Deadline':<10}{'Burst':<8}"
+    f"{'Response':<10}{'Wait':<8}{'Turnaround':<12}"
+    f"{'Blocked(M)':<12}{'Blocked(S)':<12}{'Deadline':<10}"
+)
+
+for p in sorted(tasks, key=lambda x: x["name"]):
+    response = p["first_start"] - p["arrival"]
+    turnaround = p["completion"] - p["arrival"]
+    deadline_missed = p["completion"] > p["arrival"] + p["deadline"]
+
+    print(
+        f"{p['name']:<7}{p['deadline']:<10}{p['burst']:<8}"
+        f"{response:<10}{p['wait']:<8}{turnaround:<12}"
+        f"{p['blocked_monitor']:<12}{p['blocked_semaphore']:<12}"
+        f"{'MISSED' if deadline_missed else 'OK':<10}"
+    )
+
+print("\nGantt Chart:")
+for start, end, label in gantt:
+    print(f"| {label} [{start}-{end}] ", end="")
+print("|")
+
+n = len(tasks)
+print("\nTotal CPU Idle Time:", idle_time)
+print(
+    "Average Response Time:",
+    sum(p["first_start"] - p["arrival"] for p in tasks) / n
+)
+print("Average Wait Time:", sum(p["wait"] for p in tasks) / n)
+print(
+    "Average Turnaround Time:",
+    sum(p["completion"] - p["arrival"] for p in tasks) / n
+)
+print(
+    "Total Monitor Blocked Time:",
+    sum(p["blocked_monitor"] for p in tasks)
+)
+print(
+    "Total Semaphore Blocked Time:",
+    sum(p["blocked_semaphore"] for p in tasks)
+)
