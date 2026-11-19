@@ -1,0 +1,59 @@
+tasks = [
+    {"name": "Task 1", "arrival": 0, "burst": 5, "deadline": 10},
+    {"name": "Task 2", "arrival": 1, "burst": 3, "deadline": 5},
+    {"name": "Task 3", "arrival": 2, "burst": 1, "deadline": 8}
+]
+
+remaining = {task["name"]: task["burst"] for task in tasks}
+completion = {}
+time = 0
+finished = set()
+
+print("Deadline Monotonic Scheduling")
+print("-" * 65)
+
+while len(finished) < len(tasks):
+    ready_tasks = [
+        task for task in tasks
+        if task["arrival"] <= time
+        and task["name"] not in finished
+        and remaining[task["name"]] > 0
+    ]
+
+    if not ready_tasks:
+        time += 1
+        continue
+
+    task = min(ready_tasks, key=lambda t: t["deadline"])
+    name = task["name"]
+
+    remaining[name] -= 1
+    time += 1
+
+    if remaining[name] == 0:
+        completion[name] = time
+        finished.add(name)
+
+print("Task | Arrival | Execution | Deadline | Completion")
+print("-" * 65)
+
+for task in tasks:
+    name = task["name"]
+    print(
+        name, "|",
+        task["arrival"], "|",
+        task["burst"], "|",
+        task["deadline"], "|",
+        completion[name]
+    )
+
+
+
+
+Deadline Monotonic Scheduling
+-----------------------------------------------------------------
+Task | Arrival | Execution | Deadline | Completion
+-----------------------------------------------------------------
+Task 1 | 0 | 5 | 10 | 9
+Task 2 | 1 | 3 | 5 | 4
+Task 3 | 2 | 1 | 8 | 5
