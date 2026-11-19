@@ -1,0 +1,108 @@
+import threading
+import time
+
+mutex = threading.Semaphore(1)
+rw_mutex = threading.Semaphore(1)
+
+read_count = 0
+shared_data = 0
+
+def reader():
+    global read_count
+
+    mutex.acquire()
+    read_count += 1
+
+    if read_count == 1:
+        rw_mutex.acquire()
+
+    mutex.release()
+
+    print("Reader is reading:", shared_data)
+    time.sleep(1)
+
+    mutex.acquire()
+    read_count -= 1
+
+    if read_count == 0:
+        rw_mutex.release()
+
+    mutex.release()
+
+
+def writer():
+    global shared_data
+
+    rw_mutex.acquire()
+
+    shared_data += 1
+    print("Writer updated data:", shared_data)
+
+    rw_mutex.release()
+
+
+t1 = threading.Thread(target=reader)
+t2 = threading.Thread(target=reader)
+t3 = threading.Thread(target=writer)
+
+t1.start()
+t2.start()
+t3.start()
+
+t1.join()
+t2.join()
+t3.join()
+
+import threading
+import time
+
+class ReaderWriterMonitor:
+
+    def __init__(self):
+        self.condition = threading.Condition()
+        self.readers = 0
+        self.writer_active = False
+
+    def start_read(self):
+        with self.condition:
+            while self.writer_active:
+                self.condition.wait()
+
+            self.readers += 1
+
+    def end_read(self):
+        with self.condition:
+            self.readers -= 1
+
+            if self.readers == 0:
+                self.condition.notify_all()
+
+    def start_write(self):
+        with self.condition:
+            while self.writer_active or self.readers > 0:
+                self.condition.wait()
+
+            self.writer_active = True
+
+    def end_write(self):
+        with self.condition:
+            self.writer_active = False
+            self.condition.notify_all()
+
+
+monitor = ReaderWriterMonitor()
+data = 0
+
+def reader():
+    global data
+    monitor.start_read()
+    print("Reader:", data)
+    time.sleep(1)
+    monitor.end_read()
+
+def writer():
+    global data
+    monitor.start_write()
+    data += 1
+    print("Writer:", data)
+    monitor.end_write()
