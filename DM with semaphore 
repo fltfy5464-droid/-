@@ -1,7 +1,7 @@
 
-# Deadline Monotonic (DM) Scheduling with Monitor
-# Discrete-time preemptive simulation
-# The monitor critical section is treated as non-preemptive.
+   
+# Deadline Monotonic (DM) Scheduling with Semaphore
+# Discrete-time, preemptive simulation
 
 tasks = [
     {"name": "P1", "arrival": 0, "deadline": 7,
@@ -14,14 +14,14 @@ tasks = [
      "before": 1, "critical": 1, "after": 1},
 ]
 
-# Monitor state
-monitor_owner = None
+# Each task's execution time = before + critical + after.
+# Shorter relative deadline means higher DM priority.
 
 for p in tasks:
     p["burst"] = p["before"] + p["critical"] + p["after"]
-    p["before_left"] = p["before"]
-    p["critical_left"] = p["critical"]
-    p["after_left"] = p["after"]
+    p["remaining_before"] = p["before"]
+    p["remaining_cs"] = p["critical"]
+    p["remaining_after"] = p["after"]
     p["phase"] = "BEFORE"
     p["first_start"] = None
     p["completion"] = None
@@ -29,126 +29,124 @@ for p in tasks:
     p["blocked"] = 0
     p["done"] = False
 
-    if p["before_left"] == 0:
-        p["phase"] = "MONITOR"
+    if p["remaining_before"] == 0:
+        p["phase"] = "CS"
 
+semaphore_owner = None
+gantt = []
 time = 0
 idle_time = 0
-gantt = []
 
 
-def update_phase(p):
-    if p["phase"] == "BEFORE" and p["before_left"] == 0:
-        p["phase"] = "MONITOR"
+def normalize(p):
+    """Skip execution phases that have zero duration."""
+    if p["phase"] == "BEFORE" and p["remaining_before"] == 0:
+        p["phase"] = "CS"
 
-    if p["phase"] == "MONITOR" and p["critical_left"] == 0:
+    if p["phase"] == "CS" and p["remaining_cs"] == 0:
         p["phase"] = "AFTER"
 
-    if p["phase"] == "AFTER" and p["after_left"] == 0:
+    if p["phase"] == "AFTER" and p["remaining_after"] == 0:
         p["phase"] = "DONE"
         p["done"] = True
 
 
-def add_gantt(start, end, label):
-    if gantt and gantt[-1][2] == label and gantt[-1][1] == start:
+def record_gantt(start, end, label):
+    if gantt and gantt[-1][2] == label:
         gantt[-1] = (gantt[-1][0], end, label)
     else:
         gantt.append((start, end, label))
 
 
+# Discrete-time scheduling loop
 while any(not p["done"] for p in tasks):
     for p in tasks:
-        update_phase(p)
+        normalize(p)
 
     ready = [
         p for p in tasks
         if p["arrival"] <= time and not p["done"]
     ]
 
-    # Tasks that need the monitor but cannot enter are blocked.
     blocked_now = [
         p for p in ready
-        if p["phase"] == "MONITOR"
-        and monitor_owner is not None
-        and monitor_owner != p["name"]
+        if p["phase"] == "CS"
+        and semaphore_owner is not None
+        and semaphore_owner != p["name"]
     ]
-
-    for p in blocked_now:
-        p["blocked"] += 1
 
     runnable = [p for p in ready if p not in blocked_now]
 
-    # If a task holds the monitor, let it finish its critical
-    # section before scheduling another task.
-    if monitor_owner is not None:
-        current = next(
-            (p for p in tasks
-             if p["name"] == monitor_owner and not p["done"]),
-            None
-        )
-    else:
-        runnable.sort(key=lambda p: p["deadline"])
-        current = runnable[0] if runnable else None
+    # Count time spent blocked by the semaphore.
+    for p in blocked_now:
+        p["blocked"] += 1
 
-    if current is None:
+    # DM priority: earliest relative deadline first.
+    runnable.sort(key=lambda p: p["deadline"])
+
+    if not runnable:
         idle_time += 1
-        add_gantt(time, time + 1, "IDLE")
+        record_gantt(time, time + 1, "IDLE")
         time += 1
         continue
 
-    # Runnable tasks that are not selected wait in the ready queue.
-    for p in runnable:
-        if p is not current:
-            p["wait"] += 1
+    current = runnable[0]
+
+    # Other runnable jobs wait in the ready queue.
+    for p in runnable[1:]:
+        p["wait"] += 1
 
     if current["first_start"] is None:
         current["first_start"] = time
 
-    # Enter monitor and acquire exclusive access.
-    if current["phase"] == "MONITOR" and monitor_owner is None:
-        monitor_owner = current["name"]
-        print(f"t={time}: {current['name']} entered monitor")
+    # Acquire semaphore when entering the critical section.
+    if current["phase"] == "CS" and semaphore_owner is None:
+        semaphore_owner = current["name"]
+        print(f"t={time}: {current['name']} acquired semaphore")
 
-    add_gantt(time, time + 1, current["name"])
+    record_gantt(time, time + 1, current["name"])
 
+    # Execute one time unit.
     if current["phase"] == "BEFORE":
-        current["before_left"] -= 1
+        current["remaining_before"] -= 1
 
-    elif current["phase"] == "MONITOR":
-        current["critical_left"] -= 1
+    elif current["phase"] == "CS":
+        current["remaining_cs"] -= 1
 
-        if current["critical_left"] == 0:
-            print(f"t={time + 1}: {current['name']} exited monitor")
-            monitor_owner = None
+        # Release semaphore after critical section finishes.
+        if current["remaining_cs"] == 0:
+            semaphore_owner = None
+            print(f"t={time + 1}: {current['name']} released semaphore")
             current["phase"] = "AFTER"
 
     elif current["phase"] == "AFTER":
-        current["after_left"] -= 1
+        current["remaining_after"] -= 1
 
     time += 1
-    update_phase(current)
+
+    normalize(current)
 
     if current["done"]:
         current["completion"] = time
 
+
 # Results
-print("\nDM Scheduling with Monitor")
-print("-" * 90)
+print("\nDM Scheduling with Semaphore")
+print("=" * 85)
+
 print(
     f"{'Task':<7}{'Deadline':<10}{'Burst':<8}"
-    f"{'Response':<10}{'Wait':<8}{'Turnaround':<12}"
-    f"{'Blocked':<9}{'Deadline?':<10}"
+    f"{'Response':<10}{'Wait':<8}{'Result':<9}{'Blocked':<9}"
 )
 
 for p in sorted(tasks, key=lambda x: x["name"]):
-    response = p["first_start"] - p["arrival"]
-    turnaround = p["completion"] - p["arrival"]
-    missed = p["completion"] > p["arrival"] + p["deadline"]
+    response_time = p["first_start"] - p["arrival"]
+    result_time = p["completion"] - p["arrival"]
 
     print(
         f"{p['name']:<7}{p['deadline']:<10}{p['burst']:<8}"
-        f"{response:<10}{p['wait']:<8}{turnaround:<12}"
-        f"{p['blocked']:<9}{'MISSED' if missed else 'OK':<10}"
+        f"{response_time:<10}{p['wait']:<8}"
+        f"{result_time:<9}{p['blocked']:<9}"
     )
 
 print("\nGantt Chart:")
@@ -156,13 +154,15 @@ for start, end, label in gantt:
     print(f"| {label} [{start}-{end}] ", end="")
 print("|")
 
+print(f"\nTotal CPU Idle Time = {idle_time}")
+
+print("\nAverage metrics:")
 n = len(tasks)
-print("\nTotal CPU Idle Time:", idle_time)
-print("Average Response Time:",
+print("Average Response Time =",
       sum(p["first_start"] - p["arrival"] for p in tasks) / n)
-print("Average Wait Time:",
+print("Average Wait Time =",
       sum(p["wait"] for p in tasks) / n)
-print("Average Turnaround Time:",
+print("Average Turnaround Time =",
       sum(p["completion"] - p["arrival"] for p in tasks) / n)
-print("Total Monitor Blocked Time:",
+print("Total Blocked Time =",
       sum(p["blocked"] for p in tasks))
